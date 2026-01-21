@@ -1,6 +1,6 @@
 name: 每日自动爬取GitHub趋势数据
 on:
-  workflow_dispatch:  # 仅手动触发（可按需加schedule）
+  workflow_dispatch:  # 仅手动触发
 
 permissions:
   contents: read
@@ -9,46 +9,57 @@ jobs:
   crawl-trend:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    
+
     steps:
       - name: 拉取仓库最新代码
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # 步骤1：配置Python环境+缓存pip依赖（核心！）
-      - name: 配置Python 3.11环境（带缓存）
+      # 1. 缓存Python pip依赖（已生效）
+      - name: 配置Python 3.11环境（带pip缓存）
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'  # 启用pip依赖缓存，缓存路径：~/.cache/pip
-          cache-dependency-path: |  # 指定依赖文件，仅当文件变化时重新缓存
-            requirements.txt
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
 
-      # 步骤2：安装Python依赖（命中缓存时只需1-2秒）
+      # 2. 安装Python依赖（命中缓存仅1-2秒）
       - name: 安装Python依赖
         run: |
           python -m pip install --upgrade pip
-          pip install playwright>=1.40.0
+          pip install -r requirements.txt
 
-      # 步骤3：缓存Playwright浏览器（核心！避免每次重装Chromium）
-      - name: 缓存Playwright浏览器
+      # 3. 核心：缓存Playwright浏览器（精准路径+固定密钥）
+      - name: 缓存Playwright浏览器包
         id: cache-playwright
-        uses: actions/cache@v4  # 通用缓存动作
+        uses: actions/cache@v4
         with:
-          path: ~/.cache/ms-playwright  # Playwright浏览器缓存路径
-          key: ${{ runner.os }}-playwright-${{ hashFiles('**/requirements.txt') }}
+          # 仅缓存浏览器包（耗时大头），排除无关文件
+          path: /home/runner/.cache/ms-playwright/
+          # 固定密钥：仅当Playwright版本变更时失效
+          key: playwright-chromium-1200  # 对应你日志里的chromium-1200版本
           restore-keys: |
-            ${{ runner.os }}-playwright-
+            playwright-chromium-
 
-      # 步骤4：安装Playwright浏览器（命中缓存时跳过安装）
-      - name: 安装/恢复Playwright浏览器
+      # 4. 仅缓存未命中时，才安装浏览器（彻底跳过重复下载）
+      - name: 安装Playwright浏览器（仅未命中时执行）
         run: |
-          # 若缓存未命中，安装浏览器；命中则跳过
-          playwright install chromium --with-deps || true
+          if [ "${{ steps.cache-playwright.outputs.cache-hit }}" = "true" ]; then
+            echo "✅ 浏览器缓存命中，跳过安装！"
+            # 验证缓存有效性（不重装，仅检查）
+            npx playwright install --dry-run chromium
+          else
+            echo "❌ 缓存未命中，安装浏览器..."
+            # 仅安装浏览器，系统依赖用--with-deps但耗时极低
+            npx playwright install chromium --with-deps
+          fi
 
-      # 步骤5：执行脚本（无变化）
-      - name: 执行核心操作
+      # 5. 执行核心脚本
+      - name: 执行爬取脚本
         env:
           ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          BASE_URL: "https://trend.pythonanywhere.com"
         run: |
           python daily_update.py
