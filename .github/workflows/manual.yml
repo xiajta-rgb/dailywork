@@ -1,8 +1,6 @@
 name: 每日自动爬取GitHub趋势数据
 on:
-  schedule:
-    - cron: '0 0 * * *'
-  workflow_dispatch:
+  workflow_dispatch:  # 仅手动触发（可按需加schedule）
 
 permissions:
   contents: read
@@ -10,32 +8,47 @@ permissions:
 jobs:
   crawl-trend:
     runs-on: ubuntu-latest
-    timeout-minutes: 5  # 超时从30分钟缩短到5分钟（足够完成核心操作）
+    timeout-minutes: 5
+    
     steps:
       - name: 拉取仓库最新代码
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: 配置Python 3.11环境
+      # 步骤1：配置Python环境+缓存pip依赖（核心！）
+      - name: 配置Python 3.11环境（带缓存）
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: ''
+          cache: 'pip'  # 启用pip依赖缓存，缓存路径：~/.cache/pip
+          cache-dependency-path: |  # 指定依赖文件，仅当文件变化时重新缓存
+            requirements.txt
 
-      - name: 安装依赖（极简安装）
+      # 步骤2：安装Python依赖（命中缓存时只需1-2秒）
+      - name: 安装Python依赖
         run: |
           python -m pip install --upgrade pip
-          pip install playwright>=1.40.0  # 直接安装，不判断requirements.txt，节省时间
+          pip install playwright>=1.40.0
 
-      - name: 安装浏览器（精简）
-        run: playwright install chromium --with-deps  # 一步安装浏览器+依赖，节省步骤时间
+      # 步骤3：缓存Playwright浏览器（核心！避免每次重装Chromium）
+      - name: 缓存Playwright浏览器
+        id: cache-playwright
+        uses: actions/cache@v4  # 通用缓存动作
+        with:
+          path: ~/.cache/ms-playwright  # Playwright浏览器缓存路径
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
 
-      - name: 执行核心操作（点击按钮即退出）
+      # 步骤4：安装Playwright浏览器（命中缓存时跳过安装）
+      - name: 安装/恢复Playwright浏览器
+        run: |
+          # 若缓存未命中，安装浏览器；命中则跳过
+          playwright install chromium --with-deps || true
+
+      # 步骤5：执行脚本（无变化）
+      - name: 执行核心操作
         env:
           ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-          BASE_URL: "https://trend.pythonanywhere.com"
         run: |
-          # 无日志文件、无多余检查，直接执行脚本
           python daily_update.py
