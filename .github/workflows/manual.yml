@@ -1,22 +1,80 @@
-- name: 执行GitHub趋势数据爬取
-  env:
-    ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
-    ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-    BASE_URL: "https://trend.pythonanywhere.com"
-  run: |
-    # 1. 先确认脚本文件存在（打印文件列表）
-    echo "===== 检查脚本文件 ====="
-    ls -la daily_update.py || echo "❌ daily_update.py 文件不存在！"
-    # 额外：打印仓库根目录所有文件，确认路径
-    ls -la
+name: 每日自动爬取GitHub趋势数据
+# 触发条件：手动触发 + 每日UTC 0点（对应北京时间8点）
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 每日北京时间8点执行（UTC+8）
+  workflow_dispatch:     # 手动触发（测试用）
+
+# 工作流基础权限配置
+permissions:
+  contents: read
+
+jobs:
+  crawl-trend:
+    runs-on: ubuntu-latest  # 运行环境：Ubuntu最新版
+    timeout-minutes: 30     # 超时保护：30分钟（适配脚本最长20分钟运行）
     
-    # 2. 先创建日志目录
-    mkdir -p logs
-    
-    # 3. 执行脚本（实时打印所有报错，同时保存日志）
-    echo "===== 开始执行脚本 ====="
-    python daily_update.py 2>&1 | tee logs/crawl_log_$(date +%Y%m%d_%H%M%S).log
-    
-    # 4. 打印退出码（确认脚本返回的错误码）
-    echo "===== 脚本退出码 ====="
-    echo $?
+    steps:
+      # 步骤1：拉取仓库最新代码（必须放在最前面）
+      - name: 拉取仓库最新代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 拉取所有提交记录，确保拿到最新文件
+
+      # 步骤2：配置Python 3.11环境（关闭依赖缓存检测）
+      - name: 配置Python 3.11环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: ''  # 关闭pip缓存检测，避免找不到文件报错
+
+      # 步骤3：安装Python依赖
+      - name: 安装脚本依赖
+        run: |
+          python -m pip install --upgrade pip
+          # 优先读requirements.txt，没有则直接安装Playwright
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt
+          else
+            pip install playwright>=1.40.0
+          fi
+
+      # 步骤4：安装Playwright浏览器及系统依赖
+      - name: 安装Playwright Chromium浏览器
+        run: |
+          playwright install chromium
+          playwright install-deps chromium  # 安装浏览器系统级依赖
+
+      # 新增：调试步骤 - 检查文件和环境（关键！）
+      - name: 调试 - 确认文件和环境
+        run: |
+          echo "===== 仓库根目录文件 ====="
+          ls -la  # 打印所有文件，确认daily_update.py存在
+          echo "===== 环境变量 ====="
+          echo "ADMIN_USERNAME: $ADMIN_USERNAME"
+          echo "ADMIN_PASSWORD: $ADMIN_PASSWORD"
+          echo "===== Python/Playwright版本 ====="
+          python --version
+          playwright --version
+
+      # 步骤5：执行爬取脚本（核心修改：脚本名改为daily_update.py）
+      - name: 执行GitHub趋势数据爬取
+        env:
+          ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          BASE_URL: "https://trend.pythonanywhere.com"
+        run: |
+          # 创建日志目录
+          mkdir -p logs
+          # 执行正确的脚本文件（daily_update.py），实时打印报错+保存日志
+          python daily_update.py 2>&1 | tee logs/crawl_log_$(date +%Y%m%d_%H%M%S).log
+          # 打印退出码
+          echo "脚本退出码: $?"
+
+      # 步骤6：上传执行日志
+      - name: 上传爬取日志
+        uses: actions/upload-artifact@v4
+        with:
+          name: 爬取日志-${{ github.run_id }}
+          path: logs/*.log
+          retention-days: 7  # 日志保留7天
