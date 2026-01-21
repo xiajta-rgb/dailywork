@@ -1,69 +1,20 @@
-name: 每日自动爬取GitHub趋势数据
-# 触发条件：手动触发 + 每日UTC 0点（对应北京时间8点）
-on:
-  schedule:
-    - cron: '0 0 * * *'  # 每日北京时间8点执行（UTC+8）
-  workflow_dispatch:     # 手动触发（测试用）
-
-# 工作流基础权限配置
-permissions:
-  contents: read
-
-jobs:
-  crawl-trend:
-    runs-on: ubuntu-latest  # 运行环境：Ubuntu最新版
-    timeout-minutes: 30     # 超时保护：30分钟（适配脚本最长20分钟运行）
+- name: 执行GitHub趋势数据爬取
+  env:
+    ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
+    ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+    BASE_URL: "https://trend.pythonanywhere.com"
+  run: |
+    # 1. 先确认脚本文件存在（打印文件列表）
+    echo "===== 检查脚本文件 ====="
+    ls -la trend_crawler.py || echo "❌ trend_crawler.py 文件不存在！"
     
-    steps:
-      # 步骤1：拉取仓库最新代码（必须放在最前面）
-      - name: 拉取仓库最新代码
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # 拉取所有提交记录，确保拿到最新的requirements.txt
-
-      # 步骤2：配置Python 3.11环境（关闭依赖缓存检测，避免找不到文件报错）
-      - name: 配置Python 3.11环境
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: ''  # 关键：关闭pip缓存检测，解决"No file matched"报错
-
-      # 步骤3：安装Python依赖（兼容有无requirements.txt两种情况）
-      - name: 安装脚本依赖
-        run: |
-          python -m pip install --upgrade pip
-          # 优先读requirements.txt，没有则直接安装Playwright
-          if [ -f "requirements.txt" ]; then
-            pip install -r requirements.txt
-          else
-            pip install playwright>=1.40.0
-          fi
-
-      # 步骤4：安装Playwright浏览器及系统依赖（CI环境必需）
-      - name: 安装Playwright Chromium浏览器
-        run: |
-          playwright install chromium
-          playwright install-deps chromium  # 安装浏览器系统级依赖
-
-      # 步骤5：执行爬取脚本（注入敏感信息，保存日志）
-      - name: 执行GitHub趋势数据爬取
-        env:
-          # 从GitHub Secrets读取账号密码（需提前配置）
-          ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-          BASE_URL: "https://trend.pythonanywhere.com"
-        run: |
-          # 创建日志目录（避免权限问题）
-          mkdir -p logs
-          # 执行脚本并保存详细日志
-          python trend_crawler.py > logs/crawl_log_$(date +%Y%m%d_%H%M%S).log 2>&1
-          # 打印日志到页面（方便实时查看）
-          cat logs/crawl_log_$(date +%Y%m%d_%H%M%S).log
-
-      # 步骤6：上传执行日志（便于下载排查问题）
-      - name: 上传爬取日志
-        uses: actions/upload-artifact@v4
-        with:
-          name: 爬取日志-${{ github.run_id }}
-          path: logs/*.log
-          retention-days: 7  # 日志保留7天
+    # 2. 先创建日志目录
+    mkdir -p logs
+    
+    # 3. 执行脚本（实时打印所有报错，同时保存日志）
+    echo "===== 开始执行脚本 ====="
+    python trend_crawler.py 2>&1 | tee logs/crawl_log_$(date +%Y%m%d_%H%M%S).log
+    
+    # 4. 打印退出码（确认脚本返回的错误码）
+    echo "===== 脚本退出码 ====="
+    echo $?
