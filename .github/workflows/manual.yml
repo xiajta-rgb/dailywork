@@ -6,14 +6,16 @@
   run: |
     # 1. 先确认脚本文件存在（打印文件列表）
     echo "===== 检查脚本文件 ====="
-    ls -la trend_crawler.py || echo "❌ trend_crawler.py 文件不存在！"
+    ls -la daily_update.py || echo "❌ daily_update.py 文件不存在！"
+    # 额外：打印仓库根目录所有文件，确认路径
+    ls -la
     
     # 2. 先创建日志目录
     mkdir -p logs
     
     # 3. 执行脚本（实时打印所有报错，同时保存日志）
     echo "===== 开始执行脚本 ====="
-    python trend_crawler.py 2>&1 | tee logs/crawl_log_$(date +%Y%m%d_%H%M%S).log
+    python daily_update.py 2>&1 | tee logs/crawl_log_$(date +%Y%m%d_%H%M%S).log
     
     # 4. 打印退出码（确认脚本返回的错误码）
     echo "===== 脚本退出码 ====="
