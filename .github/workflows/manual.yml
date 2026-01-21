@@ -1,64 +1,69 @@
 name: 每日自动爬取GitHub趋势数据
 # 触发条件：手动触发 + 每日UTC 0点（对应北京时间8点）
 on:
-  # 定时触发（cron表达式：分 时 日 月 周）
   schedule:
-    - cron: '0 0 * * *'
-  # 手动触发（方便测试）
-  workflow_dispatch:
+    - cron: '0 0 * * *'  # 每日北京时间8点执行（UTC+8）
+  workflow_dispatch:     # 手动触发（测试用）
 
-# 工作流权限（避免权限不足）
+# 工作流基础权限配置
 permissions:
   contents: read
 
 jobs:
   crawl-trend:
-    # 运行环境：Ubuntu最新版（适配Playwright）
-    runs-on: ubuntu-latest
-    # 超时时间：脚本最长运行20分钟，这里设30分钟冗余
-    timeout-minutes: 30
+    runs-on: ubuntu-latest  # 运行环境：Ubuntu最新版
+    timeout-minutes: 30     # 超时保护：30分钟（适配脚本最长20分钟运行）
     
     steps:
-      # 步骤1：拉取仓库中的脚本代码
-      - name: 拉取仓库代码
+      # 步骤1：拉取仓库最新代码（必须放在最前面）
+      - name: 拉取仓库最新代码
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 拉取所有提交记录，确保拿到最新的requirements.txt
 
-      # 步骤2：配置Python环境（匹配脚本的Python版本）
-      - name: 配置Python 3.11
+      # 步骤2：配置Python 3.11环境（关闭依赖缓存检测，避免找不到文件报错）
+      - name: 配置Python 3.11环境
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip' # 缓存依赖，加速后续执行
+          cache: ''  # 关键：关闭pip缓存检测，解决"No file matched"报错
 
-      # 步骤3：安装脚本依赖（如Playwright）
-      - name: 安装Python依赖
+      # 步骤3：安装Python依赖（兼容有无requirements.txt两种情况）
+      - name: 安装脚本依赖
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt # 需确保仓库有requirements.txt
+          # 优先读requirements.txt，没有则直接安装Playwright
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt
+          else
+            pip install playwright>=1.40.0
+          fi
 
-      # 步骤4：安装Playwright浏览器及系统依赖
-      - name: 安装Playwright Chromium
+      # 步骤4：安装Playwright浏览器及系统依赖（CI环境必需）
+      - name: 安装Playwright Chromium浏览器
         run: |
           playwright install chromium
-          playwright install-deps chromium # 安装浏览器所需系统库
+          playwright install-deps chromium  # 安装浏览器系统级依赖
 
-      # 步骤5：执行爬取脚本（注入敏感信息）
-      - name: 执行GitHub趋势爬取
+      # 步骤5：执行爬取脚本（注入敏感信息，保存日志）
+      - name: 执行GitHub趋势数据爬取
         env:
-          # 从GitHub Secrets中读取账号密码（需提前配置）
+          # 从GitHub Secrets读取账号密码（需提前配置）
           ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           BASE_URL: "https://trend.pythonanywhere.com"
         run: |
-          # 执行脚本并保存日志
-          python trend_crawler.py > crawl_log_$(date +%Y%m%d).log 2>&1
-          # 打印日志（便于在Actions页面查看）
-          cat crawl_log_$(date +%Y%m%d).log
+          # 创建日志目录（避免权限问题）
+          mkdir -p logs
+          # 执行脚本并保存详细日志
+          python trend_crawler.py > logs/crawl_log_$(date +%Y%m%d_%H%M%S).log 2>&1
+          # 打印日志到页面（方便实时查看）
+          cat logs/crawl_log_$(date +%Y%m%d_%H%M%S).log
 
-      # 步骤6：上传执行日志（可选，便于后续排查问题）
+      # 步骤6：上传执行日志（便于下载排查问题）
       - name: 上传爬取日志
         uses: actions/upload-artifact@v4
         with:
           name: 爬取日志-${{ github.run_id }}
-          path: crawl_log_*.log
-          retention-days: 7 # 日志保留7天
+          path: logs/*.log
+          retention-days: 7  # 日志保留7天
